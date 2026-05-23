@@ -18,6 +18,7 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import Timeout as RequestsTimeout
 
 from strix.config import Config
+from strix.interface.utils import check_docker_connection
 
 from . import SandboxInitializationError
 from .runtime import AbstractRuntime, SandboxInfo
@@ -32,8 +33,8 @@ CONTAINER_CAIDO_PORT = 48080
 class DockerRuntime(AbstractRuntime):
     def __init__(self) -> None:
         try:
-            self.client = docker.from_env(timeout=DOCKER_TIMEOUT)
-        except (DockerException, RequestsConnectionError, RequestsTimeout) as e:
+            self.client = check_docker_connection()
+        except RuntimeError as e:
             raise SandboxInitializationError(
                 "Docker is not available",
                 "Please ensure Docker Desktop is installed and running.",

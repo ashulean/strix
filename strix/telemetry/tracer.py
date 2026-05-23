@@ -7,8 +7,13 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
-from opentelemetry import trace
-from opentelemetry.trace import SpanContext, SpanKind
+try:
+    from opentelemetry import trace
+    from opentelemetry.trace import SpanContext, SpanKind
+except ImportError:
+    trace = None  # type: ignore[assignment]
+    SpanContext = None  # type: ignore[assignment,misc]
+    SpanKind = None  # type: ignore[assignment,misc]
 
 from strix.config import Config
 from strix.telemetry import posthog
@@ -206,9 +211,10 @@ class Tracer:
         span_id: str | None = None
         parent_span_id: str | None = None
 
-        current_context = trace.get_current_span().get_span_context()
-        if isinstance(current_context, SpanContext) and current_context.is_valid:
-            parent_span_id = format_span_id(current_context.span_id)
+        if trace is not None and SpanContext is not None:
+            current_context = trace.get_current_span().get_span_context()
+            if isinstance(current_context, SpanContext) and current_context.is_valid:
+                parent_span_id = format_span_id(current_context.span_id)
 
         if self._otel_tracer is not None:
             try:

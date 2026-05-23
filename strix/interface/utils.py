@@ -1349,28 +1349,66 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 
 # Docker utilities
 def check_docker_connection() -> Any:
+    import os
+    import platform
+
+    # Method 1: Try docker.from_env() (default)
     try:
-        return docker.from_env()
+        client = docker.from_env()
+        client.ping()
+        return client
     except DockerException:
-        console = Console()
-        error_text = Text()
-        error_text.append("DOCKER NOT AVAILABLE", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("Cannot connect to Docker daemon.\n", style="white")
+        pass
+
+    # Method 2: Try macOS Docker Desktop socket
+    socket_paths = [
+        str(Path.home() / ".docker" / "run" / "docker.sock"),
+        "/var/run/docker.sock",
+    ]
+    for socket_path in socket_paths:
+        if Path(socket_path).exists():
+            try:
+                client = docker.DockerClient(base_url=f"unix://{socket_path}")
+                client.ping()
+                return client
+            except DockerException:
+                pass
+
+    # Method 3: Try DOCKER_HOST environment variable
+    docker_host = os.getenv("DOCKER_HOST")
+    if docker_host:
+        try:
+            client = docker.DockerClient(base_url=docker_host)
+            client.ping()
+            return client
+        except DockerException:
+            pass
+
+    # All connection attempts failed
+    console = Console()
+    error_text = Text()
+    error_text.append("DOCKER NOT AVAILABLE", style="bold red")
+    error_text.append("\n\n", style="white")
+    error_text.append("Cannot connect to Docker daemon.\n", style="white")
+    if platform.system() == "Darwin":
         error_text.append(
-            "Please ensure Docker Desktop is installed and running, and try running strix again.\n",
+            "On macOS: ensure Docker Desktop is running. Try: open -a Docker\n",
             style="white",
         )
+    error_text.append(
+        "Please ensure Docker Desktop is installed and running, and try running strix again.\n",
+        style="white",
+    )
 
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-        console.print("\n", panel, "\n")
-        raise RuntimeError("Docker not available") from None
+    panel = Panel(
+        error_text,
+        title="[bold white]STRIX",
+        title_align="left",
+        border_style="red",
+        padding=(1, 2),
+    )
+    console.print("\n", panel, "\n")
+    raise RuntimeError("Docker not available") from None
 
 
 def image_exists(client: Any, image_name: str) -> bool:

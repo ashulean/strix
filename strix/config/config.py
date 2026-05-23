@@ -6,6 +6,8 @@ from typing import Any, ClassVar
 
 
 STRIX_API_BASE = "https://models.strix.ai/api/v1"
+NOVAROUTER_API_BASE = "https://api.novarouter.orbitronai.com/v1"
+NOVAROUTER_STAGING_BASE = "https://api.stg.novarouter.orbitronai.com/v1"
 
 
 class Config:
@@ -15,6 +17,7 @@ class Config:
     strix_llm = None
     llm_api_key = None
     llm_api_base = None
+    llm_novarouter_base = None
     openai_api_base = None
     litellm_base_url = None
     ollama_api_base = None
@@ -26,6 +29,7 @@ class Config:
         "strix_llm",
         "llm_api_key",
         "llm_api_base",
+        "llm_novarouter_base",
         "openai_api_base",
         "litellm_base_url",
         "ollama_api_base",
@@ -214,6 +218,12 @@ def resolve_llm_config() -> tuple[str | None, str | None, str | None]:
 
     if model.startswith("strix/"):
         api_base: str | None = STRIX_API_BASE
+    elif model.startswith("novarouter/"):
+        base = Config.get("llm_novarouter_base")
+        if base:
+            api_base = base.rstrip("/") + "/v1" if not base.endswith("/v1") else base
+        else:
+            api_base = NOVAROUTER_API_BASE
     else:
         api_base = (
             Config.get("llm_api_base")

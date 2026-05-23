@@ -19,6 +19,10 @@ Configure Strix using environment variables or a config file.
   Custom API base URL. Also accepts `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
 </ParamField>
 
+<ParamField path="LLM_NOVAROUTER_BASE" type="string">
+  NovaRouter gateway base URL when using `novarouter/` model prefix. Defaults to production. Set to `https://api.stg.novarouter.orbitronai.com` for staging.
+</ParamField>
+
 <ParamField path="LLM_TIMEOUT" default="300" type="integer">
   Request timeout in seconds for LLM calls.
 </ParamField>

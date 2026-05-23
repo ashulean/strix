@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import os
 from typing import Any
@@ -321,15 +322,59 @@ async def process_tool_invocations(
 
     tracer, agent_id = _get_tracer_and_agent_id(agent_state)
 
-    for tool_inv in tool_invocations:
-        observation_xml, images, tool_should_finish = await _execute_single_tool(
-            tool_inv, agent_state, tracer, agent_id
-        )
-        observation_parts.append(observation_xml)
-        all_images.extend(images)
+    # Execute all tools concurrently for better performance
+    if len(tool_invocations) == 0:
+        return False
 
-        if tool_should_finish:
-            should_agent_finish = True
+    # Create tasks for all tool invocations
+    tasks = [
+        _execute_single_tool(tool_inv, agent_state, tracer, agent_id)
+        for tool_inv in tool_invocations
+    ]
+
+    # Execute all tools in parallel and collect results
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Process results in order, handling any exceptions
+    for i, result in enumerate(results):
+        # Check if result is an exception (from return_exceptions=True)
+        if isinstance(result, BaseException):
+            # Handle errors gracefully
+            tool_name = tool_invocations[i].get("toolName", "unknown")
+            error_msg = str(result)
+            if len(error_msg) > 500:
+                error_msg = error_msg[:500] + "... [truncated]"
+            
+            observation_xml = (
+                f"<tool_result>\n<tool_name>{tool_name}</tool_name>\n"
+                f"<result>Error: {error_msg}</result>\n</tool_result>"
+            )
+            observation_parts.append(observation_xml)
+            
+            # Log error to tracer if available
+            if tracer:
+                args = tool_invocations[i].get("args", {})
+                execution_id = tracer.log_tool_execution_start(agent_id, tool_name, args)
+                tracer.update_tool_execution(execution_id, "error", error_msg)
+            continue
+
+        # At this point, result is guaranteed to be a tuple from _execute_single_tool
+        # Type: tuple[str, list[dict[str, Any]], bool]
+        try:
+            observation_xml, images, tool_should_finish = result  # type: ignore[misc]
+            observation_parts.append(observation_xml)
+            all_images.extend(images)
+
+            if tool_should_finish:
+                should_agent_finish = True
+        except (ValueError, TypeError) as e:
+            # Unexpected result type - log as error
+            tool_name = tool_invocations[i].get("toolName", "unknown")
+            observation_xml = (
+                f"<tool_result>\n<tool_name>{tool_name}</tool_name>\n"
+                f"<result>Error: Unexpected result type: {type(result)}, error: {e}</result>\n</tool_result>"
+            )
+            observation_parts.append(observation_xml)
 
     if all_images:
         content = [{"type": "text", "text": "Tool Results:\n\n" + "\n\n".join(observation_parts)}]

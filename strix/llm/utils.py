@@ -55,20 +55,27 @@ STRIX_MODEL_MAP: dict[str, str] = {
 
 
 def resolve_strix_model(model_name: str | None) -> tuple[str | None, str | None]:
-    """Resolve a strix/ model into names for API calls and capability lookups.
+    """Resolve a strix/ or novarouter/ model into names for API calls and capability lookups.
 
     Returns (api_model, canonical_model):
-    - api_model: openai/<base> for API calls (Strix API is OpenAI-compatible)
+    - api_model: openai/<base> for API calls (OpenAI-compatible endpoints)
     - canonical_model: actual provider model name for litellm capability lookups
-    Non-strix models return the same name for both.
+    Non-prefixed models return the same name for both.
     """
-    if not model_name or not model_name.startswith("strix/"):
+    if not model_name:
         return model_name, model_name
 
-    base_model = model_name[6:]
-    api_model = f"openai/{base_model}"
-    canonical_model = STRIX_MODEL_MAP.get(base_model, api_model)
-    return api_model, canonical_model
+    if model_name.startswith("strix/"):
+        base_model = model_name[6:]
+        api_model = f"openai/{base_model}"
+        canonical_model = STRIX_MODEL_MAP.get(base_model, api_model)
+        return api_model, canonical_model
+
+    if model_name.startswith("novarouter/"):
+        base_model = model_name[11:]
+        return f"openai/{base_model}", f"openai/{base_model}"
+
+    return model_name, model_name
 
 
 def _truncate_to_first_function(content: str) -> str:

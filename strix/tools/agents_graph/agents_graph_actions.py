@@ -1,6 +1,7 @@
+import asyncio
+import re
 import threading
 from datetime import UTC, datetime
-import re
 from typing import Any, Literal
 
 from strix.tools.registry import register_tool
@@ -15,7 +16,7 @@ _root_agent_id: str | None = None
 
 _agent_messages: dict[str, list[dict[str, Any]]] = {}
 
-_running_agents: dict[str, threading.Thread] = {}
+_running_agents: dict[str, asyncio.Task[Any]] = {}
 
 _agent_instances: dict[str, Any] = {}
 
@@ -202,7 +203,7 @@ def _append_wiki_update_on_finish(
         return
 
 
-def _run_agent_in_thread(
+async def _run_agent_async(
     agent: Any, state: Any, inherited_messages: list[dict[str, Any]]
 ) -> dict[str, Any]:
     try:
@@ -269,14 +270,7 @@ def _run_agent_in_thread(
 
         _agent_graph["nodes"][state.agent_id]["state"] = state.model_dump()
 
-        import asyncio
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(agent.agent_loop(state.task))
-        finally:
-            loop.close()
+        result = await agent.agent_loop(state.task)
 
     except Exception as e:
         _agent_graph["nodes"][state.agent_id]["status"] = "error"
@@ -467,14 +461,25 @@ def create_agent(
         with _agent_llm_stats_lock:
             _agent_instances[state.agent_id] = agent
 
-        thread = threading.Thread(
-            target=_run_agent_in_thread,
-            args=(agent, state, inherited_messages),
-            daemon=True,
-            name=f"Agent-{name}-{state.agent_id}",
+        # Create async task for agent execution
+        # Get the current event loop, creating one if needed
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # If no event loop is running, we need to handle this differently
+            # This shouldn't happen in normal operation since tools are called from async context
+            return {
+                "success": False,
+                "error": "No event loop available. Agent creation must be called from async context.",
+                "agent_id": None,
+            }
+
+        # Create the async task
+        task = loop.create_task(
+            _run_agent_async(agent, state, inherited_messages),
+            name=f"Agent-{name}-{state.agent_id}",  # type: ignore[arg-type]
         )
-        thread.start()
-        _running_agents[state.agent_id] = thread
+        _running_agents[state.agent_id] = task  # type: ignore[assignment]
 
     except Exception as e:  # noqa: BLE001
         return {"success": False, "error": f"Failed to create agent: {e}", "agent_id": None}
@@ -714,6 +719,12 @@ def stop_agent(agent_id: str) -> dict[str, Any]:
                 agent_instance.state.request_stop()
             if hasattr(agent_instance, "cancel_current_execution"):
                 agent_instance.cancel_current_execution()
+
+        # Cancel the async task if it exists
+        if agent_id in _running_agents:
+            task = _running_agents[agent_id]
+            if not task.done():
+                task.cancel()
 
         agent_node["status"] = "stopping"
 

@@ -1,0 +1,61 @@
+---
+title: "NovaRouter"
+description: "Configure Strix with OrbitronAI NovaRouter LLM gateway"
+---
+
+NovaRouter is an OpenAI-compatible LLM gateway that supports multiple models. Use it with Strix by pointing to the gateway base URL.
+
+## Setup
+
+### Production
+
+```bash
+export STRIX_LLM="novarouter/qwen3-coder-30b"
+export LLM_API_KEY="<your-novarouter-api-key>"
+```
+
+### Staging
+
+```bash
+export STRIX_LLM="novarouter/qwen3-coder-30b"
+export LLM_API_KEY="<your-novarouter-api-key>"
+export LLM_NOVAROUTER_BASE="https://api.stg.novarouter.orbitronai.com"
+```
+
+## Base URLs
+
+| Environment | Base URL |
+| --- | --- |
+| Staging | `https://api.stg.novarouter.orbitronai.com` |
+| Production | `https://api.novarouter.orbitronai.com` |
+
+## Available Models
+
+List models your API key can access:
+
+```bash
+curl "https://api.novarouter.orbitronai.com/v1/models" \
+  -H "Authorization: Bearer <your-api-key>"
+```
+
+Example models from the [NovaRouter Developer Guide](https://app.clickup.com/90181480068/docs/2kzkrbm4-4978/2kzkrbm4-27838):
+
+| Model | STRIX_LLM |
+| --- | --- |
+| Qwen3 Coder 30B | `novarouter/qwen3-coder-30b` |
+| GPT-OSS 120B | `novarouter/gpt-oss-120b` |
+| Qwen3 Embedding 8B | (embeddings only) |
+
+## Alternative: OpenAI-Compatible Format
+
+You can also use the generic OpenAI-compatible format:
+
+```bash
+export STRIX_LLM="openai/qwen3-coder-30b"
+export LLM_API_BASE="https://api.novarouter.orbitronai.com/v1"
+export LLM_API_KEY="<your-novarouter-api-key>"
+```
+
+## Authentication
+
+NovaRouter accepts `Authorization: Bearer <key>`. Ensure `LLM_API_KEY` is set to your NovaRouter API key.

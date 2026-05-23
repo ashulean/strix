@@ -1,4 +1,4 @@
-.PHONY: help install dev-install format lint type-check test test-cov clean pre-commit setup-dev
+.PHONY: help install dev-install format lint type-check test test-cov clean pre-commit setup-dev docker-build docker-build-no-cache docker-push
 
 help:
 	@echo "Available commands:"
@@ -20,6 +20,11 @@ help:
 	@echo "Development:"
 	@echo "  pre-commit    - Run pre-commit hooks on all files"
 	@echo "  clean         - Clean up cache files and artifacts"
+	@echo ""
+	@echo "Docker:"
+	@echo "  docker-build  - Build Docker image with local code changes"
+	@echo "  docker-build-no-cache - Build Docker image without cache"
+	@echo "  docker-push   - Push Docker image to registry (requires auth)"
 
 install:
 	uv sync --no-dev
@@ -88,3 +93,27 @@ clean:
 
 dev: format lint type-check test
 	@echo "✅ Development cycle complete!"
+
+docker-build:
+	@echo "🐳 Building Docker image with local code changes..."
+	@echo "   This will tag the image as 'strix-sandbox:local'"
+	@echo "   Set STRIX_IMAGE=strix-sandbox:local to use it"
+	docker build -f containers/Dockerfile -t strix-sandbox:local .
+	@echo "✅ Docker image built successfully!"
+	@echo "   To use this image, run: export STRIX_IMAGE=strix-sandbox:local"
+
+docker-build-no-cache:
+	@echo "🐳 Building Docker image without cache (fresh build)..."
+	@echo "   This will take longer but ensures all changes are included"
+	docker build --no-cache -f containers/Dockerfile -t strix-sandbox:local .
+	@echo "✅ Docker image built successfully!"
+	@echo "   To use this image, run: export STRIX_IMAGE=strix-sandbox:local"
+
+docker-push:
+	@echo "🚀 Pushing Docker image to registry..."
+	@echo "   Note: This requires authentication and proper image tag"
+	@echo "   Current image tag: strix-sandbox:local"
+	@echo "   Update the tag below to match your registry"
+	@echo "   Example: docker tag strix-sandbox:local ghcr.io/usestrix/strix-sandbox:0.1.11"
+	@echo "   Then: docker push ghcr.io/usestrix/strix-sandbox:0.1.11"
+	@echo "⚠️  This command is a placeholder - customize the tag as needed"

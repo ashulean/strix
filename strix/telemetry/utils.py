@@ -7,14 +7,26 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from opentelemetry import trace
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
-from opentelemetry.sdk.trace.export import (
-    BatchSpanProcessor,
-    SimpleSpanProcessor,
-    SpanExporter,
-    SpanExportResult,
-)
+try:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+    from opentelemetry.sdk.trace.export import (
+        BatchSpanProcessor,
+        SimpleSpanProcessor,
+        SpanExporter,
+        SpanExportResult,
+    )
+    _OTEL_AVAILABLE = True
+except ImportError:
+    trace = None  # type: ignore[assignment]
+    ReadableSpan = None  # type: ignore[assignment,misc]
+    TracerProvider = None  # type: ignore[assignment,misc]
+    BatchSpanProcessor = None  # type: ignore[assignment,misc]
+    SimpleSpanProcessor = None  # type: ignore[assignment,misc]
+    SpanExporter = None  # type: ignore[assignment,misc]
+    SpanExportResult = None  # type: ignore[assignment,misc]
+    _OTEL_AVAILABLE = False
+
 from scrubadub import Scrubber
 from scrubadub.detectors import RegexDetector
 from scrubadub.filth import Filth
@@ -203,102 +215,107 @@ def prune_otel_span_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
     return filtered
 
 
-class JsonlSpanExporter(SpanExporter):  # type: ignore[misc]
-    """Append OTEL spans to JSONL for local run artifacts."""
+if _OTEL_AVAILABLE:
 
-    def __init__(
-        self,
-        output_path_getter: Callable[[], Path],
-        run_metadata_getter: Callable[[], dict[str, Any]],
-        sanitizer: Callable[[Any], Any],
-        write_lock_getter: Callable[[Path], threading.Lock],
-    ):
-        self._output_path_getter = output_path_getter
-        self._run_metadata_getter = run_metadata_getter
-        self._sanitize = sanitizer
-        self._write_lock_getter = write_lock_getter
+    class JsonlSpanExporter(SpanExporter):  # type: ignore[misc]
+        """Append OTEL spans to JSONL for local run artifacts."""
 
-    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
-        records: list[dict[str, Any]] = []
-        for span in spans:
-            attributes = prune_otel_span_attributes(dict(span.attributes or {}))
-            if "strix.event_type" in attributes:
-                # Tracer events are written directly in Tracer._emit_event.
-                continue
-            records.append(self._span_to_record(span, attributes))
+        def __init__(
+            self,
+            output_path_getter: Callable[[], Path],
+            run_metadata_getter: Callable[[], dict[str, Any]],
+            sanitizer: Callable[[Any], Any],
+            write_lock_getter: Callable[[Path], threading.Lock],
+        ):
+            self._output_path_getter = output_path_getter
+            self._run_metadata_getter = run_metadata_getter
+            self._sanitize = sanitizer
+            self._write_lock_getter = write_lock_getter
 
-        if not records:
+        def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+            records: list[dict[str, Any]] = []
+            for span in spans:
+                attributes = prune_otel_span_attributes(dict(span.attributes or {}))
+                if "strix.event_type" in attributes:
+                    # Tracer events are written directly in Tracer._emit_event.
+                    continue
+                records.append(self._span_to_record(span, attributes))
+
+            if not records:
+                return SpanExportResult.SUCCESS
+
+            try:
+                output_path = self._output_path_getter()
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with self._write_lock_getter(output_path), output_path.open("a", encoding="utf-8") as f:
+                    for record in records:
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            except OSError:
+                logger.exception("Failed to write OTEL span records to JSONL")
+                return SpanExportResult.FAILURE
+
             return SpanExportResult.SUCCESS
 
-        try:
-            output_path = self._output_path_getter()
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._write_lock_getter(output_path), output_path.open("a", encoding="utf-8") as f:
-                for record in records:
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except OSError:
-            logger.exception("Failed to write OTEL span records to JSONL")
-            return SpanExportResult.FAILURE
+        def shutdown(self) -> None:
+            return None
 
-        return SpanExportResult.SUCCESS
+        def force_flush(self, timeout_millis: int = 30_000) -> bool:  # noqa: ARG002
+            return True
 
-    def shutdown(self) -> None:
-        return None
+        def _span_to_record(
+            self,
+            span: ReadableSpan,
+            attributes: dict[str, Any],
+        ) -> dict[str, Any]:
+            span_context = span.get_span_context()
+            parent_context = span.parent
 
-    def force_flush(self, timeout_millis: int = 30_000) -> bool:  # noqa: ARG002
-        return True
+            status = None
+            if span.status and span.status.status_code:
+                status = span.status.status_code.name.lower()
 
-    def _span_to_record(
-        self,
-        span: ReadableSpan,
-        attributes: dict[str, Any],
-    ) -> dict[str, Any]:
-        span_context = span.get_span_context()
-        parent_context = span.parent
-
-        status = None
-        if span.status and span.status.status_code:
-            status = span.status.status_code.name.lower()
-
-        event_type = str(attributes.get("gen_ai.operation.name", span.name))
-        run_metadata = self._run_metadata_getter()
-        run_id_attr = (
-            attributes.get("strix.run_id")
-            or attributes.get("strix_run_id")
-            or run_metadata.get("run_id")
-            or span.resource.attributes.get("strix.run_id")
-        )
-
-        record: dict[str, Any] = {
-            "timestamp": iso_from_unix_ns(span.end_time) or datetime.now(UTC).isoformat(),
-            "event_type": event_type,
-            "run_id": str(run_id_attr or run_metadata.get("run_id") or ""),
-            "trace_id": format_trace_id(span_context.trace_id),
-            "span_id": format_span_id(span_context.span_id),
-            "parent_span_id": format_span_id(parent_context.span_id if parent_context else None),
-            "actor": None,
-            "payload": None,
-            "status": status,
-            "error": None,
-            "source": "otel.span",
-            "span_name": span.name,
-            "span_kind": span.kind.name.lower(),
-            "attributes": self._sanitize(attributes),
-        }
-
-        if span.events:
-            record["otel_events"] = self._sanitize(
-                [
-                    {
-                        "name": event.name,
-                        "timestamp": iso_from_unix_ns(event.timestamp),
-                        "attributes": dict(event.attributes or {}),
-                    }
-                    for event in span.events
-                ]
+            event_type = str(attributes.get("gen_ai.operation.name", span.name))
+            run_metadata = self._run_metadata_getter()
+            run_id_attr = (
+                attributes.get("strix.run_id")
+                or attributes.get("strix_run_id")
+                or run_metadata.get("run_id")
+                or span.resource.attributes.get("strix.run_id")
             )
 
-        return record
+            record: dict[str, Any] = {
+                "timestamp": iso_from_unix_ns(span.end_time) or datetime.now(UTC).isoformat(),
+                "event_type": event_type,
+                "run_id": str(run_id_attr or run_metadata.get("run_id") or ""),
+                "trace_id": format_trace_id(span_context.trace_id),
+                "span_id": format_span_id(span_context.span_id),
+                "parent_span_id": format_span_id(parent_context.span_id if parent_context else None),
+                "actor": None,
+                "payload": None,
+                "status": status,
+                "error": None,
+                "source": "otel.span",
+                "span_name": span.name,
+                "span_kind": span.kind.name.lower(),
+                "attributes": self._sanitize(attributes),
+            }
+
+            if span.events:
+                record["otel_events"] = self._sanitize(
+                    [
+                        {
+                            "name": event.name,
+                            "timestamp": iso_from_unix_ns(event.timestamp),
+                            "attributes": dict(event.attributes or {}),
+                        }
+                        for event in span.events
+                    ]
+                )
+
+            return record
+
+else:
+    JsonlSpanExporter = None  # type: ignore[assignment,misc]
 
 
 def bootstrap_otel(
@@ -316,6 +333,9 @@ def bootstrap_otel(
     write_lock_getter: Callable[[Path], threading.Lock],
     tracer_name: str = "strix.telemetry.tracer",
 ) -> tuple[Any, bool, bool, bool]:
+    if not _OTEL_AVAILABLE or trace is None:
+        return (None, False, bootstrapped, remote_enabled_state)
+
     with bootstrap_lock:
         if bootstrapped:
             return (
