@@ -311,6 +311,39 @@ def _get_tracer_and_agent_id(agent_state: Any | None) -> tuple[Any | None, str]:
     return tracer, agent_id
 
 
+def _can_run_tools_in_parallel(tool_invocations: list[dict[str, Any]]) -> bool:
+    """Parallelize only sandbox-isolated tools; host tools keep LLM call order."""
+    if len(tool_invocations) <= 1:
+        return False
+    return all(
+        should_execute_in_sandbox(inv.get("toolName", "")) for inv in tool_invocations
+    )
+
+
+async def _run_tool_invocations(
+    tool_invocations: list[dict[str, Any]],
+    agent_state: Any | None,
+    tracer: Any | None,
+    agent_id: str,
+) -> list[Any]:
+    if _can_run_tools_in_parallel(tool_invocations):
+        tasks = [
+            _execute_single_tool(tool_inv, agent_state, tracer, agent_id)
+            for tool_inv in tool_invocations
+        ]
+        return list(await asyncio.gather(*tasks, return_exceptions=True))
+
+    results: list[Any] = []
+    for tool_inv in tool_invocations:
+        try:
+            results.append(await _execute_single_tool(tool_inv, agent_state, tracer, agent_id))
+        except asyncio.CancelledError:
+            raise
+        except BaseException as e:
+            results.append(e)
+    return results
+
+
 async def process_tool_invocations(
     tool_invocations: list[dict[str, Any]],
     conversation_history: list[dict[str, Any]],
@@ -322,22 +355,16 @@ async def process_tool_invocations(
 
     tracer, agent_id = _get_tracer_and_agent_id(agent_state)
 
-    # Execute all tools concurrently for better performance
     if len(tool_invocations) == 0:
         return False
 
-    # Create tasks for all tool invocations
-    tasks = [
-        _execute_single_tool(tool_inv, agent_state, tracer, agent_id)
-        for tool_inv in tool_invocations
-    ]
-
-    # Execute all tools in parallel and collect results
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = await _run_tool_invocations(tool_invocations, agent_state, tracer, agent_id)
 
     # Process results in order, handling any exceptions
     for i, result in enumerate(results):
-        # Check if result is an exception (from return_exceptions=True)
+        if isinstance(result, asyncio.CancelledError):
+            raise result
+        # Errors already traced in _execute_single_tool; only format observation here
         if isinstance(result, BaseException):
             # Handle errors gracefully
             tool_name = tool_invocations[i].get("toolName", "unknown")

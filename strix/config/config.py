@@ -221,7 +221,8 @@ def resolve_llm_config() -> tuple[str | None, str | None, str | None]:
     elif model.startswith("novarouter/"):
         base = Config.get("llm_novarouter_base")
         if base:
-            api_base = base.rstrip("/") + "/v1" if not base.endswith("/v1") else base
+            stripped = base.rstrip("/")
+            api_base = stripped if stripped.endswith("/v1") else f"{stripped}/v1"
         else:
             api_base = NOVAROUTER_API_BASE
     else:
