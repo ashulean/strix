@@ -288,7 +288,7 @@ async def _execute_single_tool(
 
         _update_tracer_with_result(tracer, execution_id, is_error, result, error_payload)
 
-    except (ConnectionError, RuntimeError, ValueError, TypeError, OSError) as e:
+    except Exception as e:
         error_msg = str(e)
         if tracer and execution_id:
             tracer.update_tool_execution(execution_id, "error", error_msg)
@@ -350,12 +350,6 @@ async def process_tool_invocations(
                 f"<result>Error: {error_msg}</result>\n</tool_result>"
             )
             observation_parts.append(observation_xml)
-            
-            # Log error to tracer if available
-            if tracer:
-                args = tool_invocations[i].get("args", {})
-                execution_id = tracer.log_tool_execution_start(agent_id, tool_name, args)
-                tracer.update_tool_execution(execution_id, "error", error_msg)
             continue
 
         # At this point, result is guaranteed to be a tuple from _execute_single_tool

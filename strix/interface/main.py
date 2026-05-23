@@ -62,14 +62,17 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
     missing_optional_vars = []
 
     strix_llm = Config.get("strix_llm")
-    uses_strix_models = strix_llm and strix_llm.startswith("strix/")
+    uses_builtin_gateway = strix_llm and (
+        strix_llm.startswith("strix/") or strix_llm.startswith("novarouter/")
+    )
 
     if not strix_llm:
         missing_required_vars.append("STRIX_LLM")
 
-    has_base_url = uses_strix_models or any(
+    has_base_url = uses_builtin_gateway or any(
         [
             Config.get("llm_api_base"),
+            Config.get("llm_novarouter_base"),
             Config.get("openai_api_base"),
             Config.get("litellm_base_url"),
             Config.get("ollama_api_base"),
