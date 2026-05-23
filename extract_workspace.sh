@@ -34,7 +34,7 @@ else
     # Ask user to select
     echo -e "${YELLOW}Enter container number or name:${NC}"
     read -r SELECTION
-    
+
     # Check if it's a number
     if [[ "$SELECTION" =~ ^[0-9]+$ ]]; then
         CONTAINER_NAME=$(echo "$CONTAINERS" | sed -n "${SELECTION}p")
@@ -43,9 +43,18 @@ else
     fi
 fi
 
-# Verify container exists
-if ! docker ps -a --format "{{.Names}}" | grep -q "^${CONTAINER_NAME}$"; then
-    echo -e "${RED}Container '${CONTAINER_NAME}' not found.${NC}"
+if [ -z "$CONTAINER_NAME" ]; then
+    echo -e "${RED}No container selected.${NC}"
+    exit 1
+fi
+
+# Require a Strix scan container (must have strix-scan-id label)
+if ! echo "$CONTAINERS" | grep -qxF "$CONTAINER_NAME"; then
+    echo -e "${RED}Container '${CONTAINER_NAME}' is not a Strix scan container.${NC}"
+    echo -e "${YELLOW}Only containers with the strix-scan-id label are allowed.${NC}"
+    echo ""
+    echo -e "${GREEN}Valid Strix containers:${NC}"
+    echo "$CONTAINERS" | nl -w2 -s'. '
     exit 1
 fi
 
@@ -53,8 +62,8 @@ fi
 SCAN_ID=$(docker inspect "$CONTAINER_NAME" --format '{{index .Config.Labels "strix-scan-id"}}')
 
 if [ -z "$SCAN_ID" ]; then
-    echo -e "${YELLOW}Warning: Could not find scan-id label. Using container name.${NC}"
-    SCAN_ID="${CONTAINER_NAME#strix-scan-}"
+    echo -e "${RED}Container '${CONTAINER_NAME}' is missing the strix-scan-id label.${NC}"
+    exit 1
 fi
 
 # Determine destination directory
